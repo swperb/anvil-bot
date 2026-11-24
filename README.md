@@ -120,6 +120,21 @@ GitHub filing is optional and off until a token is stored.
 To rotate it, create a new token, repeat steps 2 and 3, then delete the old token on GitHub. To
 turn filing off, delete `secrets/github_token` on the NAS and restart.
 
+## The GitHub feed
+
+Anvil posts what happens in `swperb/anvilcad` to two read-only channels it creates on start:
+
+- **#releases**: every pull request merged into `main`, with its summary, and every published
+  release with its notes. This is the running changelog.
+- **#github**: pull requests opened, merged, closed and reopened; issues opened, closed and
+  reopened; new comments (not from bots); published releases.
+
+Anvil polls the repository's public event list (every 60 seconds with the GitHub token, every
+120 without) instead of receiving a webhook, so no webhook or secret needs setting up on GitHub.
+The first start records the existing history without posting it. What has been posted is kept
+in `feed.json` in the data folder, so a restart never posts twice. Rename or move either channel
+freely; Anvil remembers them by ID. Set `FEED=off` in the app's environment to turn the feed off.
+
 ## The audit log
 
 Every change, refusal, cancelled confirmation and start-up goes to the private `#anvil-log`

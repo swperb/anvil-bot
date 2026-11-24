@@ -9,8 +9,10 @@ export interface Config {
   logChannelId: string | null;
   /** GitHub token for filing confirmed bug reports, or null when not set up. */
   githubToken: string | null;
-  /** owner/name of the repository bug reports are filed in. */
+  /** owner/name of the repository bug reports are filed in and the feed watches. */
   githubRepo: string;
+  /** Post the repository's activity to #releases and #github (FEED=off turns it off). */
+  feed: boolean;
 }
 
 const SNOWFLAKE = /^\d{17,20}$/;
@@ -72,6 +74,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     token,
     githubToken: readOptionalToken(env.GITHUB_TOKEN_FILE?.trim()),
     githubRepo,
+    feed: !/^(off|false|0|no)$/i.test(env.FEED?.trim() ?? ""),
     guildId: snowflake(env, "GUILD_ID"),
     dataDir: resolve(env.DATA_DIR?.trim() || "./data"),
     adminRoleId: snowflake(env, "ADMIN_ROLE_ID"),

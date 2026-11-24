@@ -1,7 +1,7 @@
 // Anvil: the admin bot for the AnvilCAD Discord server.
 
 import { join } from "node:path";
-import { ActivityType, Client, Events, GatewayIntentBits, MessageFlags, type Guild } from "discord.js";
+import { ActivityType, Client, EmbedBuilder, Events, GatewayIntentBits, MessageFlags, type Guild } from "discord.js";
 import { checkAuthorised, type Rules } from "./auth.ts";
 import { Audit } from "./audit.ts";
 import { GitHub } from "./bounty/github.ts";
@@ -11,6 +11,7 @@ import { actorOf } from "./command.ts";
 import { COMMANDS } from "./commands/index.ts";
 import { ConfigError, loadConfig, type Config } from "./config.ts";
 import { describeError, UserError } from "./errors.ts";
+import { GitHubFeed, type FeedPost } from "./feed.ts";
 import { Journal } from "./journal.ts";
 import { log, logToDir } from "./log.ts";
 import { Session } from "./session.ts";
@@ -43,6 +44,38 @@ async function fileOnGitHub(_guild: Guild, report: Report): Promise<string | nul
   log.info(`Filed bug report #${report.id} as GitHub ${kind} ${url}`);
   // The report's status line already carries the link; say only what it means.
   return report.security ? "The advisory is private to the maintainers until the fix is published, with credit." : null;
+}
+
+const feed = config.feed ? new GitHubFeed(config.githubRepo, config.githubToken, join(config.dataDir, "feed.json")) : null;
+
+async function sendFeedPost(guild: Guild, post: FeedPost): Promise<void> {
+  const id = post.target === "releases" ? state.releasesChannelId : state.githubChannelId;
+  const channel = id ? guild.channels.cache.get(id) : undefined;
+  if (!channel?.isTextBased()) return;
+  const e = post.embed;
+  const embed = new EmbedBuilder().setTitle(e.title).setURL(e.url).setColor(e.color).setAuthor({ name: e.author, url: `https://github.com/${e.author}` }).setTimestamp(new Date(e.timestamp));
+  if (e.description) embed.setDescription(e.description);
+  if (e.footer) embed.setFooter({ text: e.footer });
+  await channel.send({ embeds: [embed], allowedMentions: { parse: [] } });
+}
+
+/** Poll GitHub forever. A failed poll or post is logged and tried again on the next round. */
+async function runFeed(guild: Guild): Promise<void> {
+  if (!feed) return;
+  for (;;) {
+    try {
+      for (const { id, posts } of await feed.poll()) {
+        for (const post of posts) {
+          // One bad post (a deleted channel, a Discord hiccup) must not hold up the rest of the feed.
+          await sendFeedPost(guild, post).catch((err) => log.error(`GitHub feed: could not post "${post.embed.title}"`, err));
+        }
+        feed.markPosted(id);
+      }
+    } catch (err) {
+      log.warn(`GitHub feed: ${err instanceof Error ? err.message : String(err)}; trying again in ${feed.interval}s.`);
+    }
+    await new Promise((resolve) => setTimeout(resolve, feed.interval * 1000));
+  }
 }
 
 const bountyDeps = (): BountyDeps => ({ store: bountyStore, audit, adminRoleId: state.adminRoleId, onAccepted: fileOnGitHub });
@@ -91,7 +124,9 @@ client.once(Events.ClientReady, async (c) => {
     ready = true;
     log.info(`Ready in ${home.name}: ${COMMANDS.length} commands registered.`);
     log.info(github ? `Confirmed bug reports are filed in ${github.repo}.` : "No GitHub token, so confirmed bug reports are not filed on GitHub.");
+    log.info(feed ? `GitHub feed: posting ${feed.repo} to #releases and #github.` : "GitHub feed is off (FEED=off).");
     await audit.note(home, `Anvil started and registered ${COMMANDS.length} commands.`);
+    void runFeed(home);
   } catch (err) {
     log.error("Setup failed; Anvil will not take commands until it is restarted", err);
   }
