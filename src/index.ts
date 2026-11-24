@@ -34,16 +34,15 @@ const audit = new Audit(() => state.logChannelId);
 const bountyStore = new BountyStore(join(config.dataDir, "bounty.json"));
 const github = config.githubToken ? new GitHub(config.githubToken, config.githubRepo) : null;
 
-/** File a confirmed report on GitHub and remember where. Returns a line for the report's thread. */
+/** File a confirmed report on GitHub and remember where. Returns an extra line for the report's thread, if any. */
 async function fileOnGitHub(_guild: Guild, report: Report): Promise<string | null> {
   if (!github) return null;
   const kind = report.security ? "advisory" : "issue";
   const url = report.security ? await github.fileAdvisory(report) : await github.fileIssue(report);
   bountyStore.update(report.id, { github: { kind, url } });
   log.info(`Filed bug report #${report.id} as GitHub ${kind} ${url}`);
-  return report.security
-    ? "Filed as a private GitHub security advisory; it will be published, with credit, once fixed."
-    : `Filed on GitHub: ${url}`;
+  // The report's status line already carries the link; say only what it means.
+  return report.security ? "The advisory is private to the maintainers until the fix is published, with credit." : null;
 }
 
 const bountyDeps = (): BountyDeps => ({ store: bountyStore, audit, adminRoleId: state.adminRoleId, onAccepted: fileOnGitHub });
