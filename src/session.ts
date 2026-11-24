@@ -16,15 +16,39 @@ import {
 } from "discord.js";
 import type { Actor, Rules } from "./auth.ts";
 import type { Audit } from "./audit.ts";
+import type { BountyDeps } from "./bounty/triage.ts";
 import type { Entry, Journal, UndoOp } from "./journal.ts";
 
 const CONFIRM_MS = 60_000;
 const firstLine = (s: string) => s.split("\n")[0] ?? s;
 const MODAL_MS = 15 * 60_000;
 
+export interface FormField {
+  id: string;
+  label: string;
+  value?: string;
+  placeholder?: string;
+  maxLength?: number;
+  paragraph?: boolean;
+  required?: boolean;
+}
+
+export function textInput(field: FormField): TextInputBuilder {
+  const input = new TextInputBuilder()
+    .setCustomId(field.id)
+    .setLabel(field.label.slice(0, 45))
+    .setStyle(field.paragraph ? TextInputStyle.Paragraph : TextInputStyle.Short)
+    .setMaxLength(field.maxLength ?? 2000)
+    .setRequired(field.required ?? true);
+  if (field.value) input.setValue(field.value.slice(0, field.maxLength ?? 2000));
+  if (field.placeholder) input.setPlaceholder(field.placeholder.slice(0, 100));
+  return input;
+}
+
 export interface Services {
   journal: Journal;
   audit: Audit;
+  bounty?: BountyDeps;
 }
 
 export class Session {
@@ -101,27 +125,26 @@ export class Session {
    * Must be called before anything else replies. Returns null if the form is closed.
    */
   async promptText(title: string, label: string, value = "", maxLength = 2000): Promise<string | null> {
+    const answers = await this.promptForm(title, [{ id: "text", label, value, maxLength, paragraph: true }]);
+    return answers?.text ?? null;
+  }
+
+  /**
+   * Show a pop-up form with up to five fields and wait up to 15 minutes for it.
+   * Must be called before anything else replies. Returns null if the form is closed.
+   */
+  async promptForm(title: string, fields: FormField[]): Promise<Record<string, string> | null> {
     const id = `anvil:modal:${this.interaction.id}`;
-    const input = new TextInputBuilder()
-      .setCustomId("text")
-      .setLabel(label.slice(0, 45))
-      .setStyle(TextInputStyle.Paragraph)
-      .setMaxLength(maxLength)
-      .setRequired(true);
-    if (value) input.setValue(value.slice(0, maxLength));
-    await this.interaction.showModal(
-      new ModalBuilder()
-        .setCustomId(id)
-        .setTitle(title.slice(0, 45))
-        .addComponents(new ActionRowBuilder<TextInputBuilder>().addComponents(input)),
-    );
+    const modal = new ModalBuilder().setCustomId(id).setTitle(title.slice(0, 45));
+    for (const field of fields) modal.addComponents(new ActionRowBuilder<TextInputBuilder>().addComponents(textInput(field)));
+    await this.interaction.showModal(modal);
     const submit = await this.interaction
       .awaitModalSubmit({ time: MODAL_MS, filter: (i) => i.customId === id && i.user.id === this.actor.id })
       .catch(() => null);
     if (!submit || !submit.inCachedGuild()) return null;
     this.#target = submit;
     await this.defer();
-    return submit.fields.getTextInputValue("text");
+    return Object.fromEntries(fields.map((f) => [f.id, submit.fields.getTextInputValue(f.id).trim()]));
   }
 
   /** Record a finished change in the journal and the audit log, and tell the person. */

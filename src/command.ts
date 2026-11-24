@@ -15,6 +15,8 @@ import type { Session } from "./session.ts";
 /** One slash command. Add a file in src/commands/ that exports one of these, then list it in src/commands/index.ts. */
 export interface Command {
   data: { name: string; toJSON(): RESTPostAPIChatInputApplicationCommandsJSONBody };
+  /** Anyone in the server may run it (it must check anything sensitive itself). Default: owner and Anvil Admins only. */
+  public?: boolean;
   /** Return true if this run opens a pop-up form first (the router then does not start a reply). */
   usesModal?(interaction: ChatInputCommandInteraction<"cached">): boolean;
   execute(session: Session): Promise<void>;

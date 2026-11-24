@@ -4,6 +4,8 @@ import { join } from "node:path";
 import { ActivityType, Client, Events, GatewayIntentBits, MessageFlags, type Guild } from "discord.js";
 import { checkAuthorised, type Rules } from "./auth.ts";
 import { Audit } from "./audit.ts";
+import { BountyStore } from "./bounty/store.ts";
+import { handleBountyComponent, type BountyDeps } from "./bounty/triage.ts";
 import { actorOf } from "./command.ts";
 import { COMMANDS } from "./commands/index.ts";
 import { ConfigError, loadConfig, type Config } from "./config.ts";
@@ -28,6 +30,8 @@ const byName = new Map(COMMANDS.map((c) => [c.data.name, c]));
 const journal = new Journal(join(config.dataDir, "journal.jsonl"));
 let state: State = loadState(config.dataDir);
 const audit = new Audit(() => state.logChannelId);
+const bountyStore = new BountyStore(join(config.dataDir, "bounty.json"));
+const bountyDeps = (): BountyDeps => ({ store: bountyStore, audit, adminRoleId: state.adminRoleId });
 let ready = false;
 
 const client = new Client({
@@ -83,7 +87,13 @@ client.on(Events.GuildCreate, (guild) => {
 });
 
 client.on(Events.InteractionCreate, async (interaction) => {
-  // Buttons and forms are answered by the command that showed them.
+  // Bug bounty buttons, menus and forms outlive the command that showed them.
+  if ((interaction.isButton() || interaction.isStringSelectMenu() || interaction.isModalSubmit()) && interaction.customId.startsWith("bounty:")) {
+    if (!ready || !interaction.inCachedGuild() || interaction.guildId !== config.guildId) return;
+    await handleBountyComponent(interaction, actorOf(interaction.member, state.adminRoleId), bountyDeps());
+    return;
+  }
+  // Other buttons and forms are answered by the command that showed them.
   if (!interaction.isChatInputCommand() && !interaction.isAutocomplete()) return;
   const command = byName.get(interaction.commandName);
   if (!interaction.inCachedGuild() || interaction.guildId !== config.guildId || !command) {
@@ -92,7 +102,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
     return;
   }
   const actor = actorOf(interaction.member, state.adminRoleId);
-  const refusal = ready ? checkAuthorised(actor) : "Anvil is still starting up. Try again in a moment.";
+  const refusal = !ready ? "Anvil is still starting up. Try again in a moment." : command.public ? null : checkAuthorised(actor);
 
   if (interaction.isAutocomplete()) {
     if (refusal || !command.autocomplete) await interaction.respond([]).catch(() => undefined);
@@ -107,7 +117,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
     return;
   }
 
-  const session = new Session(interaction, actor, rulesFor(interaction.guild), { journal, audit });
+  const session = new Session(interaction, actor, rulesFor(interaction.guild), { journal, audit, bounty: bountyDeps() });
   try {
     if (!command.usesModal?.(interaction)) await session.defer();
     await command.execute(session);

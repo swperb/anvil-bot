@@ -1,3 +1,4 @@
+import { bounty, bug, triage } from "../bounty/commands.ts";
 import type { Command } from "../command.ts";
 import { anvil } from "./anvil.ts";
 import { channel } from "./channel.ts";
@@ -9,4 +10,4 @@ import { server } from "./server.ts";
 import { history, undo } from "./undo.ts";
 
 /** Every command Anvil registers. Add new ones here. */
-export const COMMANDS: readonly Command[] = [channel, role, perm, message, server, member, undo, history, anvil];
+export const COMMANDS: readonly Command[] = [channel, role, perm, message, server, member, undo, history, anvil, bug, bounty, triage];

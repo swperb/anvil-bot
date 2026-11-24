@@ -101,14 +101,22 @@ cmd_deploy() {
   ssh_nas "test -s $(q "$r/secrets/discord_token")" || { echo "No token on the NAS yet. Run: scripts/nas.sh token" >&2; exit 1; }
   sync_code
   payload="$(render_compose | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))')"
+  local sum
+  sum="$(render_compose | shasum -a 256 | cut -d' ' -f1)"
   if app_exists; then
-    echo "Updating $APP_NAME"
-    job app.update "$APP_NAME" "{\"custom_compose_config_string\":$payload}"
-    job app.redeploy "$APP_NAME"
+    # app.update restarts the app itself; only redeploy when the compose file is unchanged.
+    if [ "$(ssh_nas "cat $(q "$r/compose.sha256") 2>/dev/null" || true)" != "$sum" ]; then
+      echo "Updating $APP_NAME"
+      job app.update "$APP_NAME" "{\"custom_compose_config_string\":$payload}"
+    else
+      echo "Restarting $APP_NAME with the new code"
+      job app.redeploy "$APP_NAME"
+    fi
   else
     echo "Creating $APP_NAME"
     job app.create "{\"app_name\":\"$APP_NAME\",\"custom_app\":true,\"custom_compose_config_string\":$payload}"
   fi
+  ssh_nas "printf '%s' $(q "$sum") > $(q "$r/compose.sha256")"
   cmd_status
 }
 

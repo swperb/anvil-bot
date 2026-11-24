@@ -6,17 +6,19 @@ import { parseMessageLink } from "../src/commands/message.ts";
 import { mergeOverwrite } from "../src/commands/perm.ts";
 import { parseColor } from "../src/commands/role.ts";
 
-test("every command builds valid JSON, is guild-only and hidden from non-admins by default", () => {
+test("every command builds valid JSON, is guild-only, and only public ones are visible to everyone", () => {
   const names = new Set<string>();
   for (const command of COMMANDS) {
     const json = command.data.toJSON();
     assert.ok(!names.has(json.name), `duplicate ${json.name}`);
     names.add(json.name);
-    assert.equal(json.default_member_permissions, P.Administrator.toString());
+    if (command.public) assert.equal(json.default_member_permissions ?? null, null);
+    else assert.equal(json.default_member_permissions, P.Administrator.toString());
     assert.deepEqual(json.contexts, [0]);
     assert.ok((json.options?.length ?? 0) <= 25);
   }
-  assert.equal(names.size, 9);
+  assert.equal(names.size, 12);
+  assert.deepEqual(COMMANDS.filter((c) => c.public).map((c) => c.data.name), ["bug", "bounty"]);
 });
 
 test("parses message links from every Discord host", () => {
