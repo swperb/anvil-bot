@@ -1,0 +1,132 @@
+// Anvil: the admin bot for the AnvilCAD Discord server.
+
+import { join } from "node:path";
+import { ActivityType, Client, Events, GatewayIntentBits, MessageFlags, type Guild } from "discord.js";
+import { checkAuthorised, type Rules } from "./auth.ts";
+import { Audit } from "./audit.ts";
+import { actorOf } from "./command.ts";
+import { COMMANDS } from "./commands/index.ts";
+import { ConfigError, loadConfig, type Config } from "./config.ts";
+import { describeError, UserError } from "./errors.ts";
+import { Journal } from "./journal.ts";
+import { log, logToDir } from "./log.ts";
+import { Session } from "./session.ts";
+import { ensureSetup, loadState, type State } from "./setup.ts";
+
+function configOrExit(): Config {
+  try {
+    return loadConfig();
+  } catch (err) {
+    console.error(err instanceof ConfigError ? err.message : err);
+    process.exit(2);
+  }
+}
+const config = configOrExit();
+logToDir(config.dataDir);
+
+const byName = new Map(COMMANDS.map((c) => [c.data.name, c]));
+const journal = new Journal(join(config.dataDir, "journal.jsonl"));
+let state: State = loadState(config.dataDir);
+const audit = new Audit(() => state.logChannelId);
+let ready = false;
+
+const client = new Client({
+  // GuildMembers is a privileged intent: turn on "Server Members Intent" in the Developer Portal.
+  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers],
+});
+
+/** Anvil serves one server. It leaves any other server it is added to. */
+async function enforceHomeGuild(guild: Guild): Promise<boolean> {
+  if (guild.id === config.guildId) return true;
+  log.warn(`Leaving ${guild.name} (${guild.id}): Anvil only serves GUILD_ID ${config.guildId}.`);
+  await guild.leave().catch((err) => log.error(`Could not leave ${guild.id}`, err));
+  return false;
+}
+
+function rulesFor(guild: Guild): Rules {
+  const me = guild.members.me!;
+  return {
+    adminRoleId: state.adminRoleId,
+    botId: me.id,
+    botTopRolePosition: me.roles.highest.position,
+    logChannelId: state.logChannelId,
+  };
+}
+
+client.once(Events.ClientReady, async (c) => {
+  log.info(`Signed in as ${c.user.tag} (application ${c.application.id}).`);
+  if (!config.guildId) {
+    const list = c.guilds.cache.map((g) => `${g.name} = ${g.id}`).join("; ") || "none yet";
+    log.error(`GUILD_ID is not set, so Anvil will not act anywhere. Servers it is in: ${list}. Set GUILD_ID and restart.`);
+    return;
+  }
+  for (const guild of c.guilds.cache.values()) await enforceHomeGuild(guild);
+  const home = c.guilds.cache.get(config.guildId);
+  if (!home) {
+    log.error(`Anvil is not in server ${config.guildId} yet. Invite it with the link in the README, then restart.`);
+    return;
+  }
+  try {
+    state = await ensureSetup(home, config, state);
+    await home.commands.set(COMMANDS.map((cmd) => cmd.data.toJSON()));
+    c.user.setPresence({ activities: [{ name: "/anvil status", type: ActivityType.Listening }] });
+    ready = true;
+    log.info(`Ready in ${home.name}: ${COMMANDS.length} commands registered.`);
+    await audit.note(home, `Anvil started and registered ${COMMANDS.length} commands.`);
+  } catch (err) {
+    log.error("Setup failed; Anvil will not take commands until it is restarted", err);
+  }
+});
+
+client.on(Events.GuildCreate, (guild) => {
+  void enforceHomeGuild(guild);
+});
+
+client.on(Events.InteractionCreate, async (interaction) => {
+  // Buttons and forms are answered by the command that showed them.
+  if (!interaction.isChatInputCommand() && !interaction.isAutocomplete()) return;
+  const command = byName.get(interaction.commandName);
+  if (!interaction.inCachedGuild() || interaction.guildId !== config.guildId || !command) {
+    if (interaction.isAutocomplete()) await interaction.respond([]).catch(() => undefined);
+    else await interaction.reply({ content: "Anvil only works in the AnvilCAD server.", flags: MessageFlags.Ephemeral }).catch(() => undefined);
+    return;
+  }
+  const actor = actorOf(interaction.member, state.adminRoleId);
+  const refusal = ready ? checkAuthorised(actor) : "Anvil is still starting up. Try again in a moment.";
+
+  if (interaction.isAutocomplete()) {
+    if (refusal || !command.autocomplete) await interaction.respond([]).catch(() => undefined);
+    else await command.autocomplete(interaction).catch((err) => log.error("Autocomplete failed", err));
+    return;
+  }
+
+  const label = `/${[interaction.commandName, interaction.options.getSubcommand(false)].filter(Boolean).join(" ")}`;
+  if (refusal) {
+    await interaction.reply({ content: refusal, flags: MessageFlags.Ephemeral }).catch(() => undefined);
+    if (ready) await audit.refused(interaction.guild, actor.id, interaction.user.tag, label, refusal);
+    return;
+  }
+
+  const session = new Session(interaction, actor, rulesFor(interaction.guild), { journal, audit });
+  try {
+    if (!command.usesModal?.(interaction)) await session.defer();
+    await command.execute(session);
+  } catch (err) {
+    const message = describeError(err);
+    if (err instanceof UserError) await audit.refused(interaction.guild, actor.id, interaction.user.tag, label, message);
+    else log.error(`${label} failed for ${interaction.user.tag}`, err);
+    await session.say(message).catch(() => undefined);
+  }
+});
+
+client.on(Events.Error, (err) => log.error("Discord client error", err));
+process.on("unhandledRejection", (err) => log.error("Unhandled rejection", err));
+
+for (const signal of ["SIGINT", "SIGTERM"] as const) {
+  process.on(signal, () => {
+    log.info(`Stopping on ${signal}.`);
+    void client.destroy().finally(() => process.exit(0));
+  });
+}
+
+await client.login(config.token);

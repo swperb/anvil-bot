@@ -1,0 +1,31 @@
+# Anvil as a TrueNAS SCALE custom app (or any Docker Compose host).
+# scripts/nas.sh fills in @ROOT@, @GUILD_ID@ and @IMAGE@ and installs it.
+#
+# Hardening: no ports are published (Anvil only makes outbound connections to
+# Discord), it runs as the unprivileged "apps" user with every Linux capability
+# dropped, the code and the token are mounted read-only, the root filesystem is
+# read-only, and memory, CPU and process counts are capped.
+services:
+  anvil:
+    image: @IMAGE@
+    user: "568:568"
+    working_dir: /app
+    command: ["node", "--disable-warning=ExperimentalWarning", "src/index.ts"]
+    environment:
+      NODE_ENV: production
+      DISCORD_TOKEN_FILE: /run/secrets/discord_token
+      DATA_DIR: /data
+      GUILD_ID: "@GUILD_ID@"
+    volumes:
+      - @ROOT@/app:/app:ro
+      - @ROOT@/secrets:/run/secrets:ro
+      - @ROOT@/data:/data
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 256m
+    cpus: 0.5
+    pids_limit: 100
+    restart: unless-stopped

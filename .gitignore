@@ -1,0 +1,7 @@
+node_modules/
+.env
+*.token
+secrets/
+data/
+dist/
+.DS_Store
