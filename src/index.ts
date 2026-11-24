@@ -4,7 +4,8 @@ import { join } from "node:path";
 import { ActivityType, Client, Events, GatewayIntentBits, MessageFlags, type Guild } from "discord.js";
 import { checkAuthorised, type Rules } from "./auth.ts";
 import { Audit } from "./audit.ts";
-import { BountyStore } from "./bounty/store.ts";
+import { GitHub } from "./bounty/github.ts";
+import { BountyStore, type Report } from "./bounty/store.ts";
 import { handleBountyComponent, type BountyDeps } from "./bounty/triage.ts";
 import { actorOf } from "./command.ts";
 import { COMMANDS } from "./commands/index.ts";
@@ -31,7 +32,21 @@ const journal = new Journal(join(config.dataDir, "journal.jsonl"));
 let state: State = loadState(config.dataDir);
 const audit = new Audit(() => state.logChannelId);
 const bountyStore = new BountyStore(join(config.dataDir, "bounty.json"));
-const bountyDeps = (): BountyDeps => ({ store: bountyStore, audit, adminRoleId: state.adminRoleId });
+const github = config.githubToken ? new GitHub(config.githubToken, config.githubRepo) : null;
+
+/** File a confirmed report on GitHub and remember where. Returns a line for the report's thread. */
+async function fileOnGitHub(_guild: Guild, report: Report): Promise<string | null> {
+  if (!github) return null;
+  const kind = report.security ? "advisory" : "issue";
+  const url = report.security ? await github.fileAdvisory(report) : await github.fileIssue(report);
+  bountyStore.update(report.id, { github: { kind, url } });
+  log.info(`Filed bug report #${report.id} as GitHub ${kind} ${url}`);
+  return report.security
+    ? "Filed as a private GitHub security advisory; it will be published, with credit, once fixed."
+    : `Filed on GitHub: ${url}`;
+}
+
+const bountyDeps = (): BountyDeps => ({ store: bountyStore, audit, adminRoleId: state.adminRoleId, onAccepted: fileOnGitHub });
 let ready = false;
 
 const client = new Client({
@@ -76,6 +91,7 @@ client.once(Events.ClientReady, async (c) => {
     c.user.setPresence({ activities: [{ name: "/anvil status", type: ActivityType.Listening }] });
     ready = true;
     log.info(`Ready in ${home.name}: ${COMMANDS.length} commands registered.`);
+    log.info(github ? `Confirmed bug reports are filed in ${github.repo}.` : "No GitHub token, so confirmed bug reports are not filed on GitHub.");
     await audit.note(home, `Anvil started and registered ${COMMANDS.length} commands.`);
   } catch (err) {
     log.error("Setup failed; Anvil will not take commands until it is restarted", err);

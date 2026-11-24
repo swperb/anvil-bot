@@ -2,7 +2,7 @@
 # Run Anvil on a TrueNAS SCALE box as a custom Docker app.
 #
 #   scripts/nas.sh setup      create the dataset and folders (once)
-#   scripts/nas.sh token      store or replace the bot token (asks for it; never echoed)
+#   scripts/nas.sh token [github]  store or replace the Discord (or GitHub) token; never echoed
 #   scripts/nas.sh deploy     copy the code over and (re)start the app
 #   scripts/nas.sh restart | stop | start | status
 #   scripts/nas.sh logs [N]   the last N lines of Anvil's log (default 50)
@@ -85,7 +85,9 @@ sync_code() {
 cmd_token() {
   local r
   r="$(root)"
-  ssh -t "$NAS_USER@$NAS_HOST" "sh $(q "$r/app/scripts/remote/write-token.sh")"
+  local name=discord_token
+  [ "${1:-}" = github ] && name=github_token
+  ssh -t "$NAS_USER@$NAS_HOST" "sh $(q "$r/app/scripts/remote/write-token.sh") $name"
 }
 
 render_compose() {
@@ -127,7 +129,7 @@ cmd_status() {
 
 case "${1:-}" in
   setup) cmd_setup ;;
-  token) cmd_token ;;
+  token) cmd_token "${2:-}" ;;
   deploy) cmd_deploy ;;
   restart) job app.redeploy "$APP_NAME"; cmd_status ;;
   stop) job app.stop "$APP_NAME"; cmd_status ;;

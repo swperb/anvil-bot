@@ -157,8 +157,9 @@ async function finalise(
       filed = await deps.onAccepted(guild, updated);
     } catch (err) {
       log.error(`Filing report #${report.id} on GitHub failed`, err);
-      filed = `Could not file it on GitHub (${err instanceof Error ? err.message : "unknown error"}); file it by hand.`;
+      filed = `Could not file it on GitHub (${err instanceof Error ? err.message : "unknown error"}); an admin will file it by hand.`;
     }
+    Object.assign(updated, deps.store.get(report.id));
   }
   const rank = await syncRank(guild, deps.store, updated.reporterId);
   await refreshReportMessage(guild, updated);

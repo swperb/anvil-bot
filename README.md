@@ -32,6 +32,12 @@ Every reply from Anvil is private to the person who ran the command.
 | `/history [count]` | Recent changes with their numbers | | |
 | `/anvil status` | Who can command Anvil, and which roles could give themselves that power | | |
 
+| `/triage setup` / `launch` | Create the bug bounty's `#bug-reports` channel (hidden), then open it to everyone | launch: yes | setup: deletes the channel; launch: hides it again |
+| `/triage list` / `reopen` | Reports waiting for a decision (or by status); undo a decision and its points | | |
+
+Everyone in the server can use `/bug` and `/bounty` (see [The bug bounty](#the-bug-bounty)); every
+other command is for the owner and Anvil Admins only.
+
 Permission names are Discord's (`ViewChannel, SendMessages`) or the ones shown in Discord's
 settings (`Manage Permissions`); the option suggests names as you type.
 
@@ -56,6 +62,63 @@ people you would trust with Anvil.
 Slash commands are hidden from members without Administrator. To let Anvil Admins who lack
 Administrator see them, open Server Settings > Integrations > Anvil and allow the Anvil Admin
 role.
+
+## The bug bounty
+
+Members report bugs in AnvilCAD and earn points, rank roles and credit when an admin confirms
+them. There are no cash rewards. The rules members see are in `src/bounty/rules.ts` and are
+shown by `/bounty rules`.
+
+1. An admin runs `/triage setup`. That creates `#bug-reports`, hidden from members, with the
+   rules pinned. Admins can try `/bug` before anyone else can.
+2. `/triage launch` makes the channel visible, which opens the program. `/undo` hides it again.
+3. A member runs `/bug` (or `/bug security:True`) and fills in a form: a summary, what went
+   wrong, steps to reproduce, version and system, and an optional name to credit. Anvil opens a
+   private thread for the report, visible only to the reporter and the admins, and pings the
+   Anvil Admin role. Each member can send at most 5 reports a day.
+4. In the thread, an admin presses **Confirm bug** and picks a severity, or presses
+   **Ask for info**, **Duplicate** or **Not a bug**. Nobody can triage their own report, apart
+   from the owner.
+5. A confirmed bug earns points by severity:
+
+   | Severity | Points |
+   |---|---|
+   | low | 10 |
+   | medium | 25 |
+   | high | 50 |
+   | critical | 100 |
+
+   Points earn rank roles: Bug Hunter at 10, Senior Bug Hunter at 100 and Master Bug Hunter at
+   250. Anvil creates each role when it is first needed. Anvil posts a thank-you in
+   `#bug-reports` and locks the thread.
+6. With a GitHub token set up, a confirmed bug is also filed in `swperb/anvilcad`:
+   - An ordinary bug becomes a public issue labelled `bug`.
+   - A security report becomes a **draft security advisory**, visible only to maintainers until
+     you publish it.
+   - Either way, the text credits only the name the reporter typed in the form; Discord names
+     and IDs are never sent.
+
+`/triage reopen` undoes a decision. A member's total is always the sum of their confirmed
+reports, so their points and rank follow by themselves. Reopening doesn't touch an issue
+already filed on GitHub.
+
+Records are kept in `bounty.json` in the data folder.
+
+### The GitHub token
+
+GitHub filing is optional and off until a token is stored.
+
+1. Create a [fine-grained personal access token](https://github.com/settings/personal-access-tokens/new):
+   - **Repository access:** only `swperb/anvilcad`.
+   - **Permissions:** **Issues** read and write, and **Repository security advisories** read and
+     write. Nothing else.
+   - **Expiration:** a date you will notice; put a reminder in your calendar.
+2. Run `scripts/nas.sh token github` and paste it.
+3. Run `scripts/nas.sh restart`. The log then says "Confirmed bug reports are filed in
+   swperb/anvilcad".
+
+To rotate it, create a new token, repeat steps 2 and 3, then delete the old token on GitHub. To
+turn filing off, delete `secrets/github_token` on the NAS and restart.
 
 ## The audit log
 
@@ -168,16 +231,20 @@ Anvil leaves any server other than `GUILD_ID`.
 5. Run `npm run check` and `npm test`, then `scripts/nas.sh deploy`. Commands are registered on
    start-up.
 
-Larger features can live in their own folder under `src/` and hook into the client in
-`src/index.ts`. For example, a later triage feature could turn messages in a support channel
-into GitHub issues. Such a feature needs its own intents (such as Message Content), turned on in
-the Developer Portal, and its own credentials, kept like the bot token.
+Larger features live in their own folder under `src/`, as the bug bounty does in `src/bounty/`.
+They hook into the client in `src/index.ts`.
+
+- Commands everyone may use set `public: true` and check anything sensitive themselves.
+- Buttons and forms that must keep working after a restart carry their state in their custom
+  ID (`bounty:<action>:<id>`) and are routed by prefix in `src/index.ts`.
+- A feature that reads ordinary messages needs the Message Content intent, turned on in the
+  Developer Portal.
 
 ## Development
 
 ```bash
 npm run check   # TypeScript, strict
-npm test        # node:test unit tests: permissions, authorisation rules, journal, config, command definitions
+npm test        # node:test unit tests: permissions, authorisation, journal, config, commands, bounty, GitHub filing
 ```
 
 The code is TypeScript run directly by Node 24's type stripping, so there is no build step.

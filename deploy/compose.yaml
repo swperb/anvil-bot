@@ -16,6 +16,9 @@ services:
       DISCORD_TOKEN_FILE: /run/secrets/discord_token
       DATA_DIR: /data
       GUILD_ID: "@GUILD_ID@"
+      # Optional: confirmed bug reports are filed here when this file exists.
+      GITHUB_TOKEN_FILE: /run/secrets/github_token
+      GITHUB_REPO: swperb/anvilcad
     volumes:
       - @ROOT@/app:/app:ro
       - @ROOT@/secrets:/run/secrets:ro
